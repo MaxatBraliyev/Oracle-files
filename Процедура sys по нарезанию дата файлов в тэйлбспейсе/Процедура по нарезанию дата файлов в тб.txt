@@ -1,0 +1,26 @@
+/*Для себя создал такую штуку, повесил на расписание и забыл.
+Предварительно, конечно все настроил на сервере,там директория,доп. настройки и тд.
+Делалось все самостоятельно, ресурсов дополнительных не было(*/
+
+CREATE OR REPLACE NONEDITIONABLE PROCEDURE PRC_ADD_NEWDATAFILE AS
+
+  USED_PERCENT NUMBER;
+
+BEGIN
+
+  SELECT ROUND(USED_PERCENT)
+  INTO USED_PERCENT
+  FROM DBA_TABLESPACE_USAGE_METRICS
+  WHERE TABLESPACE_NAME='FRAUD_PROJECT_TBS';
+
+  IF
+
+    USED_PERCENT>90
+
+  THEN
+
+    EXECUTE IMMEDIATE 'ALTER TABLESPACE FRAUD_PROJECT_TBS ADD DATAFILE SIZE 200M AUTOEXTEND ON NEXT 100M MAXSIZE 32767M';
+
+  END IF;
+
+END PRC_ADD_NEWDATAFILE;

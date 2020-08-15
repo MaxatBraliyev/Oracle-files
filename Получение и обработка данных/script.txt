@@ -1,0 +1,292 @@
+/*Пример процедуры по приему и обработки данных, которую писал, конечно оригинальные названия таблиц скрыл "SOME_TABLES"*/
+
+CREATE OR REPLACE PROCEDURE PRC_A2P_PROJECT_GET_ALLDATA AS
+
+  --Объявление
+  DATE_TIME DATE;
+  PART_DATE_SMPP VARCHAR2(20);
+  PART_DATE_SS7  VARCHAR2(20);
+
+BEGIN
+  
+  --Инициализация
+  DATE_TIME := TRUNC(SYSDATE,'DD')-1;
+  PART_DATE_SMPP := 'SMPP_'||TO_CHAR(DATE_TIME,'MM_YYYY_')||TO_NUMBER(TO_CHAR(DATE_TIME,'DD'));
+  PART_DATE_SS7 := 'SS7_'||TO_CHAR(DATE_TIME,'MM_YYYY_')||TO_NUMBER(TO_CHAR(DATE_TIME,'DD'));
+  
+  --Зачистка каких таблиц стейджингов
+  EXECUTE IMMEDIATE 'TRUNCATE TABLE FRAUD_PROJECT.DIM_SOME_TABLES';
+  EXECUTE IMMEDIATE 'TRUNCATE TABLE FRAUD_PROJECT.DIM_SOME_TABLES';
+  EXECUTE IMMEDIATE 'TRUNCATE TABLE FRAUD_PROJECT.DIM_SOME_TABLES';
+
+  --Поиск номеров из тех, что уже есть и те которые пришли, далее подставление или же присвоение нового номера по сиквенси. 
+  INSERT /*+APPEND*/
+  INTO FRAUD_PROJECT.DIM_SOME_TABLES
+    SELECT NVL(F.ID, SEQ_RANDOM_ID_FOR_AB.NEXTVAL) AS ID,
+           TRIM(REGEXP_REPLACE(F.ADDR_AB, '^\W', ' ')) AS ADDR_AB
+      FROM (SELECT TT.ID, T.ADDR_AB
+              FROM (SELECT ADDR_AB
+                      FROM (SELECT DISTINCT TRIM(REGEXP_REPLACE(ADDR_A,
+                                                                '^\S{4}',
+                                                                ' ')) AS ADDR_AB
+                              FROM FRAUD_PROJECT.SS7_SOME_TABLES
+                            UNION
+                            SELECT DISTINCT TRIM(REGEXP_REPLACE(ADDR_B,
+                                                                '^\S{4}',
+                                                                ' ')) AS ADDR_AB
+                              FROM FRAUD_PROJECT.SS7_SOME_TABLES
+                            UNION
+                            SELECT DISTINCT TRIM(REGEXP_REPLACE(ADDR_A,
+                                                                '^\S{6}',
+                                                                ' ')) AS ADDR_AB
+                              FROM FRAUD_PROJECT.SMPP_SOME_TABLES
+                            UNION
+                            SELECT DISTINCT TRIM(REGEXP_REPLACE(ADDR_B,
+                                                                '^\S{6}',
+                                                                ' ')) AS ADDR_AB
+                              FROM FRAUD_PROJECT.SMPP_SOME_TABLES)) T
+              LEFT JOIN FRAUD_PROJECT.DIM_SOME_TABLES TT
+                ON TT.ADDR_AB = T.ADDR_AB) F
+     WHERE F.ID IS NULL
+       AND F.ADDR_AB IS NOT NULL;
+  COMMIT;
+
+  --Создание миграции данных с таблиц приемников в таблицы фактовые для дальнейшего анализа данных.
+  INSERT /*+APPEND*/ INTO FRAUD_PROJECT.FCT_SMPP_SOME_TABLES
+    SELECT V.ACT,
+           V.STRT,
+           V.TYP,
+           V.SRC,
+           V.DST,
+           V.RES,
+           V.ADDR_A,
+           VV.ID AS ADDR_B,
+           V.DCS,
+           V.PROTO,
+           V.ESM,
+           V.SERVICE,
+           V.REF1,
+           V.REF2,
+           V.SHED,
+           V.EXP,
+           V.SEQ,
+           V.LEN,
+           V.TEXT,
+           V.SRC_SME,
+           V.SRV_STATUS,
+           V.FOUND_FILTER_ID,
+           V.TON_NPI_ADDR_A,
+           ROW_NUMBER() OVER(PARTITION BY v.addr_a, v.addr_b ORDER BY v.check_numbers ASC) AS parts_sms
+      FROM (SELECT G.ACT,
+                   G.STRT,
+                   G.TYP,
+                   G.SRC,
+                   G.DST,
+                   G.RES,
+                   GG.ID AS ADDR_A,
+                   G.ADDR_B,
+                   G.DCS,
+                   G.PROTO,
+                   G.ESM,
+                   G.SERVICE,
+                   G.REF1,
+                   G.REF2,
+                   G.SHED,
+                   G.EXP,
+                   G.SEQ,
+                   G.LEN,
+                   G.TEXT,
+                   G.SRC_SME,
+                   G.SRV_STATUS,
+                   G.FOUND_FILTER_ID,
+                   SUBSTR(G.ADDR_A,1,6) AS TON_NPI_ADDR_A,
+                   case when trim(REGEXP_REPLACE(REGEXP_REPLACE(substr(g.text,1,instr(g.text,';')),'^\S{4}', ' '),'\S{1}$', ' ')) is not null then trim(REGEXP_REPLACE(REGEXP_REPLACE(substr(g.text,1,instr(g.text,';')),'^\S{4}', ' '),'\S{1}$', ' ')) else null end as CHECK_NUMBERS
+              FROM FRAUD_PROJECT.SMPP_SOME_TABLES G
+              LEFT JOIN FRAUD_PROJECT.DIM_SOME_TABLES GG
+                ON GG.ADDR_AB =
+                   TRIM(REGEXP_REPLACE(G.ADDR_A, '^\S{6}', ' '))) V
+      LEFT JOIN FRAUD_PROJECT.DIM_SOME_TABLES VV
+        ON VV.ADDR_AB = TRIM(REGEXP_REPLACE(V.ADDR_B, '^\S{6}', ' '));
+  COMMIT;
+
+  INSERT /*+APPEND*/ INTO FRAUD_PROJECT.FCT_SS7_SOME_TABLES
+    SELECT V.N,
+           TO_CHAR(V.SERIAL) AS SERIAL,
+           V.PARAM,
+           V.STRT,
+           V.SRC,
+           V.DST,
+           V.SRC2,
+           V.DST2,
+           V.ADDR_A,
+           VV.ID AS ADDR_B,
+           V.PARTS,
+           V.COUNT_ERRORS,
+           V.OPTIONS,
+           V.TEXT,
+           V.FD,
+           V.SMSC,
+           V.SRC_GT,
+           V.PART,
+           V.RESULT,
+           V.RESULT1,
+           V.RESULT2,
+           V.IMSI1,
+           V.IMSI2,
+           V.DST_MSC,
+           V.REPORT_INTERMEDIATE_NEED_SENT,
+           V.EXP_TIME,
+           V.PRIO,
+           V.MAX_DELIVERY_ATTEMPTS,
+           V.DCS,
+           V.PROTO_OR_MSG_REF,
+           V.UDHI,
+           V.FOUND_FILTER_ID,
+           V.FILTER_MODULE_ID,
+           V.TON_NPI_ADDR_A
+      FROM (SELECT G.N,
+                   G.SERIAL,
+                   G.PARAM,
+                   G.STRT,
+                   G.SRC,
+                   G.DST,
+                   G.SRC2,
+                   G.DST2,
+                   GG.ID AS ADDR_A,
+                   G.ADDR_B,
+                   G.PARTS,
+                   G.COUNT_ERRORS,
+                   G.OPTIONS,
+                   G.TEXT,
+                   G.FD,
+                   G.SMSC,
+                   G.SRC_GT,
+                   G.PART,
+                   G.RESULT,
+                   G.RESULT1,
+                   G.RESULT2,
+                   G.IMSI1,
+                   G.IMSI2,
+                   G.DST_MSC,
+                   G.REPORT_INTERMEDIATE_NEED_SENT,
+                   G.EXP_TIME,
+                   G.PRIO,
+                   G.MAX_DELIVERY_ATTEMPTS,
+                   G.DCS,
+                   G.PROTO_OR_MSG_REF,
+                   G.UDHI,
+                   G.FOUND_FILTER_ID,
+                   G.FILTER_MODULE_ID,
+                   SUBSTR(G.ADDR_A,1,4) AS TON_NPI_ADDR_A
+              FROM FRAUD_PROJECT.SS7_SOME_TABLES G
+              LEFT JOIN FRAUD_PROJECT.DIM_SOME_TABLES GG
+                ON GG.ADDR_AB =
+                   TRIM(REGEXP_REPLACE(G.ADDR_A, '^\S{4}', ' '))) V
+      LEFT JOIN FRAUD_PROJECT.DIM_SOME_TABLES VV
+        ON VV.ADDR_AB = TRIM(REGEXP_REPLACE(V.ADDR_B, '^\S{4}', ' '));
+  COMMIT;
+
+  --Переливка полностью хешированных данных 
+  INSERT /*+APPEND*/
+  INTO FRAUD_PROJECT.FCT_SMPP_SOME_TABLES_WH
+    SELECT * FROM FRAUD_PROJECT.SMPP_SOME_TABLES_WH;
+  COMMIT;
+
+  --Переливка полностью хешированных данных
+  INSERT /*+APPEND*/
+  INTO FRAUD_PROJECT.FCT_SS7_SOME_TABLES_WH
+    SELECT * FROM FRAUD_PROJECT.SS7_SOME_TABLES_WH;
+  COMMIT;
+
+  --Создание миграции данных с таблиц приемников в таблицы по отклоненым сообщениям.
+  EXECUTE IMMEDIATE 'INSERT /*+APPEND*/ INTO FRAUD_PROJECT.FCT_SMPP_SOME_TABLES
+    SELECT act, 
+           strt, 
+           typ, 
+           src, 
+           dst, 
+           res, 
+           addr_a, 
+           addr_b, 
+           dcs, 
+           proto, 
+           esm, 
+           service, 
+           ref1, 
+           ref2, 
+           shed, 
+           exp, 
+           seq, 
+           len, 
+           text, 
+           src_sme, 
+           srv_status, 
+           found_filter_id, 
+           ton_npi_addr_a
+      FROM FRAUD_PROJECT.FCT_SMPP_SOME_TABLES partition('||PART_DATE_SMPP||')
+     WHERE RES <> 0';
+  COMMIT;
+
+  --Создание миграции данных с таблиц приемников в таблицы по отклоненым сообщениям.
+  EXECUTE IMMEDIATE 'INSERT /*+APPEND*/ INTO FRAUD_PROJECT.FCT_SS7_SOME_TABLES
+    SELECT *
+      FROM FRAUD_PROJECT.FCT_SS7_SOME_TABLES partition('||PART_DATE_SS7||')
+     WHERE PARAM = 9';
+  COMMIT;
+  
+--Создание миграции данных с таблиц приемников правил в финальные таблицы.
+  INSERT /*+APPEND*/ INTO FRAUD_PROJECT.DIM_SOME_TABLES_RULES_FINAL
+  SELECT FILTER_ID,
+         A,
+         B,
+         SMSC,
+         GT,
+         TXT,
+         RESULT,
+         DESCR,
+         MODIFY_SMS,
+         PROTO,
+         N,
+         STATUS,
+         STATUS_OP,
+         FLAGS,
+         ADD_INFO,
+         SYSDATE AS MODIFY_DATE
+    FROM FRAUD_PROJECT.DIM_SOME_TABLES_RULES;
+  COMMIT;
+  
+  INSERT /*+APPEND*/ INTO FRAUD_PROJECT.DIM_SOME_TABLES_RULES_FINAL
+  SELECT FILTER_ID,
+         CREATE_TIME,
+         UPDATE_TIME_,
+         ADDR_A_MASK,
+         ADDR_B_MASK,
+         TXT_MASK,
+         RESULT,
+         DESCRIPTION,
+         STATUS,
+         STATUS_OP,
+         FLAGS,
+         ADD_INFO,
+         SYSDATE AS MODIFY_DATE
+    FROM FRAUD_PROJECT.DIM_SOME_TABLES_RULES;
+  COMMIT;
+  
+  --Создание миграции данных с таблиц приемников групп в финальную таблицу.
+  INSERT /*+APPEND*/ INTO FRAUD_PROJECT.DIM_SOME_TABLES_GROUP_FINAL
+  SELECT FILTER_ID,
+         FILTER_GROUP_ID,
+         DESCRIPTION
+  FROM FRAUD_PROJECT.DIM_SOME_TABLES_GROUP;
+  COMMIT;
+
+  --Зачистка данных таблиц приемников.
+  EXECUTE IMMEDIATE 'TRUNCATE TABLE FRAUD_PROJECT.SMPP_SOME_TABLES';
+  EXECUTE IMMEDIATE 'TRUNCATE TABLE FRAUD_PROJECT.SS7_SOME_TABLES';
+  EXECUTE IMMEDIATE 'TRUNCATE TABLE FRAUD_PROJECT.SMPP_SOME_TABLES';
+  EXECUTE IMMEDIATE 'TRUNCATE TABLE FRAUD_PROJECT.SS7_SOME_TABLES';
+  EXECUTE IMMEDIATE 'TRUNCATE TABLE FRAUD_PROJECT.DIM_SOME_TABLES';
+  EXECUTE IMMEDIATE 'TRUNCATE TABLE FRAUD_PROJECT.DIM_SOME_TABLES';
+  EXECUTE IMMEDIATE 'TRUNCATE TABLE FRAUD_PROJECT.DIM_SOME_TABLES';
+
+END PRC_A2P_PROJECT_GET_ALLDATA;
