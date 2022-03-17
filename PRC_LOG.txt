@@ -1,3 +1,4 @@
+
 create or replace procedure MONO_BLACK_logging(p_txt_log      varchar2,
                       p_program_name varchar2 default null,
                       p_program_line varchar2 default null,
