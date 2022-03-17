@@ -1,0 +1,68 @@
+create or replace procedure MONO_BLACK_logging(p_txt_log      varchar2,
+                      p_program_name varchar2 default null,
+                      p_program_line varchar2 default null,
+                      p_type_log     varchar2 default 'LOG', --MESSAGE, ERROR
+                      p_module_name  varchar2 default null, --ДП, КП, Клиенты и т.п.
+                      p_oper_date    date default null) as
+  pragma autonomous_transaction;
+
+  l_type_log  varchar2(100);
+  l_err_log   varchar2(3500);
+  l_stack_log varchar2(3500);
+begin
+  l_type_log := p_type_log;
+  begin
+    l_err_log := dbms_utility.format_error_backtrace;
+    if length(l_err_log) > 1 then
+      l_type_log  := 'ERROR';
+      l_stack_log := DBMS_UTILITY.FORMAT_CALL_STACK;
+    end if;
+  exception
+    when others then
+      l_err_log   := null;
+      l_stack_log := null;
+  end;
+
+  insert into MONO_BLACK_LOG
+    (id,
+     date_log,
+     type_log,
+     oper_date,
+     txt_log,
+     err_log,
+     stack_log,
+     program_name,
+     program_line,
+     module_name,
+     host,
+     osuser,
+     dbuser,
+     SESSIONID,
+     ip,
+     CLIENT_INFO
+
+     )
+  values
+    (MONO_BLACK_LOG_seq.nextval, --id   ,
+     sysdate, --date_log ,
+     l_type_log, --type_log ,
+     p_oper_date, --oper_date ,
+     p_txt_log, --txt_log ,
+     l_err_log, --err_log,
+     l_stack_log, --stack_log,
+     p_program_name, --program_name ,
+     p_program_line, -- program_line,
+     p_module_name, --module_name
+     SYS_CONTEXT('USERENV', 'HOST'), --host ,
+     SYS_CONTEXT('USERENV', 'OS_USER'), --null,--osuser,
+     SYS_CONTEXT('USERENV', 'CURRENT_USER'), --null,--dbuser,
+     SYS_CONTEXT('USERENV', 'SESSIONID'), --null,--SESSIONID,
+     SYS_CONTEXT('USERENV', 'IP_ADDRESS'), --null--ip
+     SYS_CONTEXT('USERENV', 'CLIENT_INFO') --CLIENT_INFO
+     );
+  commit;
+
+exception
+  when others then
+    null;
+end MONO_BLACK_logging;
